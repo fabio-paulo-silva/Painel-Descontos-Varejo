@@ -1386,8 +1386,10 @@ function renderManual() {{
   kpiCard(kpiEl, '% Manual (base pós-promo)', pct(totalManual, baseManual), 'Manual / (Bruto − Promocional)', 'yellow');
   kpiCard(kpiEl, 'Itens c/ Manual', cuponsManual.toLocaleString('pt-BR'), 'Itens com desconto manual', 'blue');
   kpiCard(kpiEl, 'Manual Médio / Item', brl(ticketManual), 'R$ manual ÷ itens c/ manual', 'green');
-  const receitaLiqManual = totalBruto - totalPromo - totalManual;
-  kpiCard(kpiEl, 'Receita Líquida pós-Manual', brl(receitaLiqManual), 'Bruto − Promo − Manual', 'cyan');
+  // Líquido real somente das vendas que tiveram desconto manual
+  const rowsComManual = rows.filter(r => r[HDR.manual] > 0);
+  const liqManual = rowsComManual.reduce((s, r) => s + r[HDR.bruto] - r[HDR.promo] - r[HDR.manual] - r[HDR.fidelidade], 0);
+  kpiCard(kpiEl, 'Líquido c/ Desc. Manual', brl(liqManual), 'Bruto − Promo − Manual − Fidelidade (vendas c/ manual)', 'cyan');
 
   // Charts row 1
   chartArea('charts-manual-1', [
