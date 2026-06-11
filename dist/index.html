@@ -194,7 +194,7 @@ th.sortable .arr { color: var(--green); margin-left: 3px; }
   <div class="header-logo">A</div>
   <div class="header-text">
     <h1>Dashboard Auditoria de Descontos</h1>
-    <p>Período: Jan/2026 a Mai/2026 &nbsp;|&nbsp; Gerado em: 11/06/2026 13:54</p>
+    <p>Período: Jan/2026 a Mai/2026 &nbsp;|&nbsp; Gerado em: 11/06/2026 14:57</p>
   </div>
 </div>
 
@@ -803,7 +803,7 @@ function renderManual() {
   // Charts row 2
   chartArea('charts-manual-2', [
     {id:'ch-m-itens', title:'Itens por % Manual (rede) — role p/ ver todos', scroll:true},
-    {id:'ch-m-motivo', title:'Distribuição por TAG (Top 8)'},
+    {id:'ch-m-motivo', title:'R$ Manual por TAG (Top 15) — role p/ ver todos', scroll:true},
     {id:'ch-m-canal', title:'% Manual por Canal (Manual ÷ Bruto−Promo)'},
     {id:'ch-m-mes', title:'Evolução por Mês'}
   ]);
@@ -812,10 +812,10 @@ function renderManual() {
   const itM = topItensByPct('manual', 600);
   hbar('ch-m-itens', itM.map(x=>x.name), itM.map(x=>x.pct), '#2ECC8A', true, itM, avgManual);
 
-  // Motivo2
+  // TAG (motivo2) — barras horizontais ordenadas do maior para o menor
   const byMotivo = aggregate(rows.filter(r => r[HDR.manual] > 0), HDR.motivo2, ['manual'])
-    .sort((a,b) => b.manual - a.manual).slice(0, 8);
-  doughnut('ch-m-motivo', byMotivo.map(x => LK.motivo2[x.key] || '(sem motivo)'), byMotivo.map(x => x.manual));
+    .sort((a,b) => b.manual - a.manual).slice(0, 15);
+  hbar('ch-m-motivo', byMotivo.map(x => LK.motivo2[x.key] || '(sem motivo)'), byMotivo.map(x => x.manual), '#4DE8AA', false, null, null);
 
   // Canal % (base pós-promo)
   const byCanal = aggregate(rows.filter(r => r[HDR.bruto] > 0), HDR.canal, ['manual','bruto','promo'])
@@ -964,6 +964,7 @@ function renderPromo() {
 
   chartArea('charts-promo-2', [
     {id:'ch-p-itens', title:'Itens por % Promocional (rede) — role p/ ver todos', scroll:true},
+    {id:'ch-p-camp2', title:'R$ por Campanha (Top 15) — role p/ ver todas', scroll:true},
     {id:'ch-p-mes', title:'Evolução por Mês'},
     {id:'ch-p-canal', title:'Promo por Canal'}
   ]);
@@ -971,6 +972,11 @@ function renderPromo() {
   // Itens por % promocional (rede) — todos, do menor p/ maior
   const itP = topItensByPct('promo', 600);
   hbar('ch-p-itens', itP.map(x=>x.name), itP.map(x=>x.pct), '#2ECC8A', true, itP, avgPromo);
+
+  // Campanha por R$ promo (Top 15)
+  const byCamp2 = aggregate(rows.filter(r => r[HDR.promo] > 0 && LK.campanha[r[HDR.campanha]]), HDR.campanha, ['promo'])
+    .sort((a,b) => b.promo - a.promo).slice(0, 15);
+  hbar('ch-p-camp2', byCamp2.map(x => LK.campanha[x.key]), byCamp2.map(x => x.promo), '#4DE8AA', false, null, null);
 
   const byMes = aggregate(rows, HDR.mes, ['promo']).sort((a,b) => a.key < b.key ? -1 : 1);
   lineChart('ch-p-mes', byMes.map(x => MES_LABELS[x.key]||x.key), byMes.map(x => x.promo), '#00AAFF');
@@ -1027,9 +1033,15 @@ function renderFidelidade() {
   hbar('ch-f-pracas', byPracaF.map(x=>x.key), byPracaF.map(x=>x.pct), '#00AAFF', true, byPracaF, avgFid);
 
   chartArea('charts-fid-2', [
+    {id:'ch-f-motivo', title:'R$ Fidelidade por TAG (Top 15) — role p/ ver todos', scroll:true},
     {id:'ch-f-mes', title:'Evolução por Mês'},
     {id:'ch-f-canal', title:'% Fidelidade por Canal'}
   ]);
+
+  // TAG por fidelidade
+  const byMotivoF = aggregate(rows.filter(r => r[HDR.fidelidade] > 0 && LK.motivo2[r[HDR.motivo2]]), HDR.motivo2, ['fidelidade'])
+    .sort((a,b) => b.fidelidade - a.fidelidade).slice(0, 15);
+  hbar('ch-f-motivo', byMotivoF.map(x => LK.motivo2[x.key] || '(sem motivo)'), byMotivoF.map(x => x.fidelidade), '#4DE8AA', false, null, null);
 
   const byMes = aggregate(rows, HDR.mes, ['fidelidade']).sort((a,b) => a.key < b.key ? -1 : 1);
   lineChart('ch-f-mes', byMes.map(x => MES_LABELS[x.key]||x.key), byMes.map(x => x.fidelidade), '#00AAFF');
