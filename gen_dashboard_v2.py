@@ -823,7 +823,7 @@ const LK = PAINEL.LK;
 const HDR = {{}};
 ROWS_HEADER.forEach((h, i) => HDR[h] = i);
 
-let activeFilters = {{mes:'', loja:'', consultor:'', canal:'', motivo2:'', campanha:'', dini:'', dfim:'', regional:'', praca:'', cluster:''}};
+let activeFilters = {{mes:'', loja:'', consultor:'', canal:'', motivo2:'', campanha:'', item:'', dini:'', dfim:'', regional:'', praca:'', cluster:''}};
 let currentPage = 'manual';
 const chartInstances = {{}};
 let violPage = 0;
@@ -860,6 +860,52 @@ function aggregate(rows, groupIdx, valueIdxs) {{
   return Object.values(map);
 }}
 
+// Variante que aceita uma função de chave (para dimensões derivadas como Praça)
+function aggregateByFn(rows, keyFn, valueIdxs) {{
+  const map = {{}};
+  rows.forEach(r => {{
+    const k = keyFn(r);
+    if (!k) return;
+    if (!map[k]) {{ map[k] = {{key: k}}; valueIdxs.forEach(v => map[k][v] = 0); }}
+    valueIdxs.forEach(v => {{ map[k][v] += r[HDR[v]] || 0; }});
+  }});
+  return Object.values(map);
+}}
+
+// Ranking por % manual por chave derivada (ex.: praça)
+function topManualByPctFn(rows, keyFn, topN, minBaseFrac) {{
+  const agg = {{}};
+  rows.forEach(r => {{
+    const k = keyFn(r); if (!k) return;
+    if (!agg[k]) agg[k] = {{key:k, manual:0, bruto:0, promo:0}};
+    agg[k].manual += r[HDR.manual]; agg[k].bruto += r[HDR.bruto]; agg[k].promo += r[HDR.promo];
+  }});
+  const withBase = Object.values(agg).map(x => ({{key:x.key, manual:x.manual, base:Math.max(0,x.bruto-x.promo)}}));
+  const maxBase = withBase.reduce((m,x) => Math.max(m,x.base), 0);
+  const floor = maxBase * (minBaseFrac || 0.02);
+  return withBase
+    .filter(x => x.base >= floor && x.base > 0 && x.manual > 0)
+    .map(x => ({{key:x.key, pct:x.manual/x.base*100, desc:x.manual, bruto:x.base}}))
+    .sort((a,b) => b.pct - a.pct).slice(0, topN);
+}}
+
+// Ranking por % desc/bruto por chave derivada (ex.: praça)
+function topByPctFn(rows, keyFn, descKey, topN, minBrutoFrac) {{
+  const agg = {{}};
+  rows.forEach(r => {{
+    const k = keyFn(r); if (!k) return;
+    if (!agg[k]) agg[k] = {{key:k, desc:0, bruto:0}};
+    agg[k].desc += r[HDR[descKey]]; agg[k].bruto += r[HDR.bruto];
+  }});
+  const arr = Object.values(agg);
+  const maxBruto = arr.reduce((m,x) => Math.max(m,x.bruto), 0);
+  const floor = maxBruto * (minBrutoFrac || 0.01);
+  return arr
+    .filter(x => x.bruto >= floor && x.bruto > 0)
+    .map(x => ({{key:x.key, pct:(x.desc/x.bruto)*100, desc:x.desc, bruto:x.bruto}}))
+    .sort((a,b) => b.pct - a.pct).slice(0, topN);
+}}
+
 // Ranking por % de desconto (desc/bruto), com piso de faturamento para evitar
 // falsos líderes (ex.: 1 venda pequena com 100%). minBrutoFrac = fração do
 // maior bruto do grupo usada como piso mínimo.
@@ -888,13 +934,15 @@ function topManualByPct(rows, groupIdx, topN, minBaseFrac) {{
 }}
 
 // Itens (rede) com maior % de desconto. metric = 'promo' ou 'manual'.
-// Respeita o filtro de Mês; loja/consultor não se aplicam (visão de item da rede).
+// Respeita o filtro de Mês e de Item (produto específico).
 function topItensByPct(metric, topN) {{
   const mes = activeFilters.mes;
+  const itemF = activeFilters.item !== '' ? +activeFilters.item : -1;
   const agg = {{}};  // prodIdx -> {{b, p, m}}
   for (let i = 0; i < ITEMS.length; i++) {{
     const it = ITEMS[i];
     if (mes && it[1] !== mes) continue;
+    if (itemF >= 0 && it[0] !== itemF) continue;
     const k = it[0];
     if (!agg[k]) agg[k] = {{b:0, p:0, m:0}};
     agg[k].b += it[2]; agg[k].p += it[3]; agg[k].m += it[4];
@@ -1225,13 +1273,14 @@ function populateFilters() {{
   searchable('consultor', 'Consultor', LK.cons);
   searchable('canal', 'Canal', LK.canal);
   searchable('motivo2', 'TAG', LK.motivo2);
-  if (currentPage === 'promo') searchable('campanha', 'Campanha', LK.campanha);
+  searchable('campanha', 'Campanha', LK.campanha);
+  searchable('item', 'Produto', ITEMS_PROD);
 
   const clr = document.createElement('button');
   clr.className = 'btn-clear';
   clr.textContent = 'Limpar Filtros';
   clr.onclick = () => {{
-    activeFilters = {{mes:'', loja:'', consultor:'', canal:'', motivo2:'', campanha:'', dini:'', dfim:'', regional:'', praca:'', cluster:''}};
+    activeFilters = {{mes:'', loja:'', consultor:'', canal:'', motivo2:'', campanha:'', item:'', dini:'', dfim:'', regional:'', praca:'', cluster:''}};
     populateFilters();
     renderCurrentPage();
   }};
@@ -1288,7 +1337,8 @@ function renderManual() {{
   // Charts row 1
   chartArea('charts-manual-1', [
     {{id:'ch-m-consult', title:'Consultores por % Manual (Manual ÷ Bruto−Promo) — role p/ ver todos', scroll:true}},
-    {{id:'ch-m-lojas', title:'Lojas por % Manual (Manual ÷ Bruto−Promo) — role p/ ver todas', scroll:true}}
+    {{id:'ch-m-lojas', title:'Lojas por % Manual (Manual ÷ Bruto−Promo) — role p/ ver todas', scroll:true}},
+    {{id:'ch-m-pracas', title:'Praças por % Manual (Manual ÷ Bruto−Promo)', scroll:true}}
   ]);
 
   const avgManual = baseManual > 0 ? totalManual / baseManual * 100 : 0;
@@ -1300,6 +1350,10 @@ function renderManual() {{
   // Lojas por % manual (base pós-promo) — todas, do menor p/ maior
   const byLoja = topManualByPct(rows, HDR.loja, 600, 0);
   hbar('ch-m-lojas', byLoja.map(x=>LK.loja[x.key]), byLoja.map(x=>x.pct), '#3355FF', true, byLoja, avgManual);
+
+  // Praças por % manual
+  const byPracaM = topManualByPctFn(rows, r => LK.loja_praca[r[HDR.loja]], 200, 0);
+  hbar('ch-m-pracas', byPracaM.map(x=>x.key), byPracaM.map(x=>x.pct), '#00AAFF', true, byPracaM, avgManual);
 
   // Charts row 2
   chartArea('charts-manual-2', [
@@ -1447,7 +1501,8 @@ function renderPromo() {{
 
   chartArea('charts-promo-1', [
     {{id:'ch-p-camp', title:'Campanhas por % Promo (sobre bruto) — role p/ ver todas', scroll:true}},
-    {{id:'ch-p-lojas', title:'Lojas por % Promo (sobre bruto) — role p/ ver todas', scroll:true}}
+    {{id:'ch-p-lojas', title:'Lojas por % Promo (sobre bruto) — role p/ ver todas', scroll:true}},
+    {{id:'ch-p-pracas', title:'Praças por % Promo (sobre bruto)', scroll:true}}
   ]);
 
   const avgPromo = totalBruto > 0 ? totalPromo / totalBruto * 100 : 0;
@@ -1457,6 +1512,10 @@ function renderPromo() {{
 
   const byLoja = topByPct(rows, HDR.loja, 'promo', 600, 0);
   hbar('ch-p-lojas', byLoja.map(x => LK.loja[x.key]), byLoja.map(x => x.pct), '#3355FF', true, byLoja, avgPromo);
+
+  // Praças por % promo
+  const byPracaP = topByPctFn(rows, r => LK.loja_praca[r[HDR.loja]], 'promo', 200, 0);
+  hbar('ch-p-pracas', byPracaP.map(x=>x.key), byPracaP.map(x=>x.pct), '#00AAFF', true, byPracaP, avgPromo);
 
   chartArea('charts-promo-2', [
     {{id:'ch-p-itens', title:'Itens por % Promocional (rede) — role p/ ver todos', scroll:true}},
@@ -1505,7 +1564,8 @@ function renderFidelidade() {{
 
   chartArea('charts-fid-1', [
     {{id:'ch-f-lojas', title:'Lojas por % Fidelidade (sobre bruto) — role p/ ver todas', scroll:true}},
-    {{id:'ch-f-consult', title:'Consultores por % Fidelidade (sobre bruto) — role p/ ver todos', scroll:true}}
+    {{id:'ch-f-consult', title:'Consultores por % Fidelidade (sobre bruto) — role p/ ver todos', scroll:true}},
+    {{id:'ch-f-pracas', title:'Praças por % Fidelidade (sobre bruto)', scroll:true}}
   ]);
 
   const avgFid = totalBruto > 0 ? totalFid / totalBruto * 100 : 0;
@@ -1516,6 +1576,10 @@ function renderFidelidade() {{
   // Consultores SEM gestores — todos, do menor p/ maior
   const byConsult = topByPct(semGestores(rows), HDR.consultor, 'fidelidade', 600, 0);
   hbar('ch-f-consult', byConsult.map(x => LK.cons[x.key]), byConsult.map(x => x.pct), '#3355FF', true, byConsult, avgFid);
+
+  // Praças por % fidelidade
+  const byPracaF = topByPctFn(rows, r => LK.loja_praca[r[HDR.loja]], 'fidelidade', 200, 0);
+  hbar('ch-f-pracas', byPracaF.map(x=>x.key), byPracaF.map(x=>x.pct), '#00AAFF', true, byPracaF, avgFid);
 
   chartArea('charts-fid-2', [
     {{id:'ch-f-mes', title:'Evolução por Mês'}},
@@ -1638,6 +1702,7 @@ function buscarDetalhe() {{
 
   loadMonth(mesV, () => {{
     const cup = (window.DET_M && window.DET_M[mesV]) || [];
+    const CAMPS_EXCL = ['MIMO ANIVERSÁRIO', 'AÇÃO DE FLUXO'];
     DET_ROWS = cup.filter(c => {{
       const lj = c[1];
       if (li >= 0 && lj !== li) return false;
@@ -1648,7 +1713,23 @@ function buscarDetalhe() {{
       if (busca && String(c[0]).indexOf(busca) < 0) return false;
       if (comdesc === '1' && (c[6]+c[7]+c[8]) <= 0) return false;
       return true;
-    }});
+    }}).map(c => {{
+      // Remove itens que são Sacolas ou de campanhas excluídas
+      const items = c[9].filter(it => {{
+        const prod = (D.prod[it[1]] || '').toUpperCase();
+        if (prod.includes('SACOLA')) return false;
+        const camp = (D.camp[it[9]] || '').toUpperCase();
+        if (CAMPS_EXCL.some(ec => camp.includes(ec))) return false;
+        return true;
+      }});
+      if (!items.length) return null;
+      // Recalcula totais do cupom sem os itens excluídos
+      let nb=0, np=0, nm=0, nf=0;
+      items.forEach(it => {{ nb+=it[3]; np+=it[4]; nm+=it[5]; nf+=it[6]; }});
+      return [c[0], c[1], c[2], c[3], c[4],
+              Math.round(nb*100)/100, Math.round(np*100)/100,
+              Math.round(nm*100)/100, Math.round(nf*100)/100, items];
+    }}).filter(Boolean);
     detPage = 0;
     applyDetSort();
     renderDetSummary();
