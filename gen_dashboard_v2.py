@@ -823,7 +823,58 @@ const LK = PAINEL.LK;
 const HDR = {{}};
 ROWS_HEADER.forEach((h, i) => HDR[h] = i);
 
-let activeFilters = {{mes:'', loja:'', consultor:'', canal:'', motivo2:'', campanha:'', item:'', dini:'', dfim:'', regional:'', praca:'', cluster:''}};
+// ── Grupos de TAG ──────────────────────────────────────────────────────────
+const TAG_GRUPOS = [
+  'Vencimento Próximo',
+  'VIC / Convênio',
+  'IMP / Impulso',
+  'Desconto Funcionário',
+  'IMP GN',
+  'DI / Desconto Interno',
+  'Fidelidade',
+  'Sem Justificativa',
+  'Outros'
+];
+
+function tagGrupo(tagStr) {{
+  if (!tagStr) return 'Outros';
+  const t = tagStr.toUpperCase();
+  if (t.includes('VENCIMENTO') || t.includes('VENC.')) return 'Vencimento Próximo';
+  if (t.includes('[VIC]') || t.includes('[VFL]')) return 'VIC / Convênio';
+  if (t.includes('[IMP]')) return 'IMP / Impulso';
+  if (t.includes('110 -') || t.includes('FUNCION')) return 'Desconto Funcionário';
+  if (t.includes('IMP GN') || t.includes('44 -')) return 'IMP GN';
+  if (t.includes('(DI)')) return 'DI / Desconto Interno';
+  if (t.includes('(DF)') || t.includes('FIDELIDADE')) return 'Fidelidade';
+  if (t.includes('0 - N') || t.includes('NÃO É DESCONTO') || t.includes('NAO E DESCONTO')) return 'Sem Justificativa';
+  return 'Outros';
+}}
+
+// Dados para gráfico de TAG: sem grupo selecionado = agrega por grupo;
+// com grupo = mostra as TAGs individuais daquele grupo
+function tagChartData(rows, valueKey, topN) {{
+  if (activeFilters.tagGrupo) {{
+    const agg = aggregate(rows.filter(r => r[HDR[valueKey]] > 0), HDR.motivo2, [valueKey]);
+    const filtered = agg
+      .filter(x => tagGrupo(LK.motivo2[x.key] || '') === activeFilters.tagGrupo)
+      .sort((a,b) => b[valueKey] - a[valueKey]).slice(0, topN||20);
+    return {{
+      labels: filtered.map(x => LK.motivo2[x.key] || '(sem motivo)'),
+      values: filtered.map(x => x[valueKey])
+    }};
+  }} else {{
+    const map = {{}};
+    rows.forEach(r => {{
+      const v = r[HDR[valueKey]]; if (!v) return;
+      const g = tagGrupo(LK.motivo2[r[HDR.motivo2]] || '');
+      map[g] = (map[g] || 0) + v;
+    }});
+    const arr = Object.entries(map).sort((a,b) => b[1]-a[1]);
+    return {{ labels: arr.map(x=>x[0]), values: arr.map(x=>x[1]) }};
+  }}
+}}
+
+let activeFilters = {{mes:'', loja:'', consultor:'', canal:'', motivo2:'', campanha:'', item:'', tagGrupo:'', dini:'', dfim:'', regional:'', praca:'', cluster:''}};
 let currentPage = 'manual';
 const chartInstances = {{}};
 let violPage = 0;
@@ -843,6 +894,7 @@ function filteredRows() {{
     if (f.canal !== '' && r[HDR.canal] !== +f.canal) return false;
     if (f.motivo2 !== '' && r[HDR.motivo2] !== +f.motivo2) return false;
     if (f.campanha !== '' && r[HDR.campanha] !== +f.campanha) return false;
+    if (f.tagGrupo && tagGrupo(LK.motivo2[r[HDR.motivo2]] || '') !== f.tagGrupo) return false;
     return true;
   }});
 }}
@@ -1272,7 +1324,8 @@ function populateFilters() {{
   searchable('loja', 'Loja', LK.loja);
   searchable('consultor', 'Consultor', LK.cons);
   searchable('canal', 'Canal', LK.canal);
-  searchable('motivo2', 'TAG', LK.motivo2);
+  selDim('tagGrupo', 'Grupo TAG', TAG_GRUPOS);
+  searchable('motivo2', 'TAG (detalhe)', LK.motivo2);
   searchable('campanha', 'Campanha', LK.campanha);
   searchable('item', 'Produto', ITEMS_PROD);
 
@@ -1280,7 +1333,7 @@ function populateFilters() {{
   clr.className = 'btn-clear';
   clr.textContent = 'Limpar Filtros';
   clr.onclick = () => {{
-    activeFilters = {{mes:'', loja:'', consultor:'', canal:'', motivo2:'', campanha:'', item:'', dini:'', dfim:'', regional:'', praca:'', cluster:''}};
+    activeFilters = {{mes:'', loja:'', consultor:'', canal:'', motivo2:'', campanha:'', item:'', tagGrupo:'', dini:'', dfim:'', regional:'', praca:'', cluster:''}};
     populateFilters();
     renderCurrentPage();
   }};
@@ -1333,6 +1386,8 @@ function renderManual() {{
   kpiCard(kpiEl, '% Manual (base pós-promo)', pct(totalManual, baseManual), 'Manual / (Bruto − Promocional)', 'yellow');
   kpiCard(kpiEl, 'Itens c/ Manual', cuponsManual.toLocaleString('pt-BR'), 'Itens com desconto manual', 'blue');
   kpiCard(kpiEl, 'Manual Médio / Item', brl(ticketManual), 'R$ manual ÷ itens c/ manual', 'green');
+  const receitaLiqManual = totalBruto - totalPromo - totalManual;
+  kpiCard(kpiEl, 'Receita Líquida pós-Manual', brl(receitaLiqManual), 'Bruto − Promo − Manual', 'cyan');
 
   // Charts row 1
   chartArea('charts-manual-1', [
@@ -1358,7 +1413,7 @@ function renderManual() {{
   // Charts row 2
   chartArea('charts-manual-2', [
     {{id:'ch-m-itens', title:'Itens por % Manual (rede) — role p/ ver todos', scroll:true}},
-    {{id:'ch-m-motivo', title:'R$ Manual por TAG (Top 15) — role p/ ver todos', scroll:true}},
+    {{id:'ch-m-motivo', title:'R$ Manual por Grupo TAG (clique Grupo TAG p/ detalhar)', scroll:true}},
     {{id:'ch-m-canal', title:'% Manual por Canal (Manual ÷ Bruto−Promo)'}},
     {{id:'ch-m-mes', title:'Evolução por Mês'}}
   ]);
@@ -1367,10 +1422,9 @@ function renderManual() {{
   const itM = topItensByPct('manual', 600);
   hbar('ch-m-itens', itM.map(x=>x.name), itM.map(x=>x.pct), '#2ECC8A', true, itM, avgManual);
 
-  // TAG (motivo2) — barras horizontais ordenadas do maior para o menor
-  const byMotivo = aggregate(rows.filter(r => r[HDR.manual] > 0), HDR.motivo2, ['manual'])
-    .sort((a,b) => b.manual - a.manual).slice(0, 15);
-  hbar('ch-m-motivo', byMotivo.map(x => LK.motivo2[x.key] || '(sem motivo)'), byMotivo.map(x => x.manual), '#4DE8AA', false, null, null);
+  // TAG — agrupada ou detalhada conforme filtro Grupo TAG
+  const motivoM = tagChartData(rows, 'manual', 20);
+  hbar('ch-m-motivo', motivoM.labels, motivoM.values, '#4DE8AA', false, null, null);
 
   // Canal % (base pós-promo)
   const byCanal = aggregate(rows.filter(r => r[HDR.bruto] > 0), HDR.canal, ['manual','bruto','promo'])
@@ -1588,15 +1642,14 @@ function renderFidelidade() {{
   hbar('ch-f-pracas', byPracaF.map(x=>x.key), byPracaF.map(x=>x.pct), '#00AAFF', true, byPracaF, avgFid);
 
   chartArea('charts-fid-2', [
-    {{id:'ch-f-motivo', title:'R$ Fidelidade por TAG (Top 15) — role p/ ver todos', scroll:true}},
+    {{id:'ch-f-motivo', title:'R$ Fidelidade por Grupo TAG (clique Grupo TAG p/ detalhar)', scroll:true}},
     {{id:'ch-f-mes', title:'Evolução por Mês'}},
     {{id:'ch-f-canal', title:'% Fidelidade por Canal'}}
   ]);
 
-  // TAG por fidelidade
-  const byMotivoF = aggregate(rows.filter(r => r[HDR.fidelidade] > 0 && LK.motivo2[r[HDR.motivo2]]), HDR.motivo2, ['fidelidade'])
-    .sort((a,b) => b.fidelidade - a.fidelidade).slice(0, 15);
-  hbar('ch-f-motivo', byMotivoF.map(x => LK.motivo2[x.key] || '(sem motivo)'), byMotivoF.map(x => x.fidelidade), '#4DE8AA', false, null, null);
+  // TAG por fidelidade — agrupada ou detalhada conforme filtro Grupo TAG
+  const motivoF = tagChartData(rows, 'fidelidade', 20);
+  hbar('ch-f-motivo', motivoF.labels, motivoF.values, '#4DE8AA', false, null, null);
 
   const byMes = aggregate(rows, HDR.mes, ['fidelidade']).sort((a,b) => a.key < b.key ? -1 : 1);
   lineChart('ch-f-mes', byMes.map(x => MES_LABELS[x.key]||x.key), byMes.map(x => x.fidelidade), '#00AAFF');
