@@ -1,0 +1,20 @@
+# ── Bases brutas (grandes e sensíveis) — NUNCA publicar ──
+*.csv
+*.xlsx
+
+# ── Artefatos antigos (substituídos pela pasta dist/) ──
+detalhamento_dados.js
+dashboard_auditoria_descontos.html
+
+# ── Scripts auxiliares / temporários ──
+_*.py
+*_out.json
+merge_sem_dedup.py
+merge_descontos_cupons.py
+generate_dashboard.py
+__pycache__/
+*.pyc
+
+# OneDrive / sistema
+desktop.ini
+Thumbs.db
