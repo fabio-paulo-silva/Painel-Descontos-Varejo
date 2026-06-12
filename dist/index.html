@@ -194,7 +194,7 @@ th.sortable .arr { color: var(--green); margin-left: 3px; }
   <div class="header-logo">A</div>
   <div class="header-text">
     <h1>Dashboard Auditoria de Descontos</h1>
-    <p>Período: Jan/2026 a Jun/2026 &nbsp;|&nbsp; Gerado em: 11/06/2026 18:18</p>
+    <p>Período: Jan/2026 a Jun/2026 &nbsp;|&nbsp; Gerado em: 12/06/2026 10:18</p>
   </div>
 </div>
 
@@ -244,6 +244,10 @@ th.sortable .arr { color: var(--green); margin-left: 3px; }
       <div class="filter-group"><label>Consultor (digite p/ buscar)</label><input type="text" id="det-cons" list="dl-det-cons" autocomplete="off" placeholder="Todos"><datalist id="dl-det-cons"></datalist></div>
       <div class="filter-group"><label>Nº Boleto / Cupom</label><input type="text" id="det-busca" placeholder="filtrar por boleto..."></div>
       <div class="filter-group"><label>Só com desconto</label><select id="det-comdesc"><option value="">Todos os cupons</option><option value="1">Apenas com desconto</option></select></div>
+      <div class="filter-group"><label>Grupo TAG</label><select id="det-grupo-tag" onchange="onDetGrupoTagChange()"><option value="">Todos os grupos</option></select></div>
+      <div class="filter-group"><label>TAG (detalhe)</label><select id="det-tag"><option value="">Todas as TAGs</option></select></div>
+      <div class="filter-group"><label>Campanha</label><select id="det-campanha"><option value="">Todas as campanhas</option></select></div>
+      <div class="filter-group"><label>Produto (busca)</label><input type="text" id="det-produto" placeholder="buscar produto..." autocomplete="off"></div>
       <button class="btn-search" id="det-btn" onclick="buscarDetalhe()">Buscar cupons</button>
     </div>
     <div id="det-status" class="no-data">Selecione o <b>Mês</b> e uma <b>Loja</b> (ou Regional/Praça/Cluster) e clique em <b>Buscar cupons</b>.</div>
@@ -1187,6 +1191,37 @@ function initDetFilters() {
   fill('det-regional', D.regionais);
   fill('det-praca', D.pracas);
   fill('det-cluster', D.clusters);
+  // Grupo TAG (os 9 grupos fixos)
+  const grpSel = document.getElementById('det-grupo-tag');
+  TAG_GRUPOS.forEach(g => { const op = document.createElement('option'); op.value = g; op.textContent = g; grpSel.appendChild(op); });
+  // TAG (detalhe) — todas as TAGs existentes nos dados, ordenadas
+  fillDetTagOptions('');
+  // Campanha — todas as campanhas existentes, ordenadas
+  const campSel = document.getElementById('det-campanha');
+  (D.camp || []).slice().sort((a,b) => a.localeCompare(b)).forEach(v => {
+    if (!v) return;
+    const op = document.createElement('option'); op.value = v; op.textContent = v; campSel.appendChild(op);
+  });
+}
+
+// Preenche o dropdown TAG com as TAGs do grupo selecionado (ou todas se grupo='')
+function fillDetTagOptions(grupo) {
+  const D = window.DET_BASE;
+  const sel = document.getElementById('det-tag');
+  const current = sel.value;
+  sel.innerHTML = '<option value="">Todas as TAGs</option>';
+  (D.mot || []).slice().sort((a,b) => a.localeCompare(b)).forEach(v => {
+    if (!v) return;
+    if (grupo && tagGrupo(v) !== grupo) return;
+    const op = document.createElement('option'); op.value = v; op.textContent = v; sel.appendChild(op);
+  });
+  // Tenta restaurar seleção anterior se ainda disponível
+  if (current && [...sel.options].some(o => o.value === current)) sel.value = current;
+}
+
+function onDetGrupoTagChange() {
+  const grupo = document.getElementById('det-grupo-tag').value;
+  fillDetTagOptions(grupo);
 }
 
 function buscarDetalhe() {
@@ -1211,6 +1246,10 @@ function buscarDetalhe() {
   const ci = (consTxt !== '' && detConsByName.hasOwnProperty(consTxt)) ? detConsByName[consTxt] : -1;
   const busca = document.getElementById('det-busca').value.trim();
   const comdesc = document.getElementById('det-comdesc').value;
+  const filtGrupoTag = document.getElementById('det-grupo-tag').value;
+  const filtTag = document.getElementById('det-tag').value;
+  const filtCamp = document.getElementById('det-campanha').value;
+  const filtProd = document.getElementById('det-produto').value.trim().toUpperCase();
 
   loadMonth(mesV, () => {
     const cup = (window.DET_M && window.DET_M[mesV]) || [];
@@ -1226,12 +1265,20 @@ function buscarDetalhe() {
       if (comdesc === '1' && (c[6]+c[7]+c[8]) <= 0) return false;
       return true;
     }).map(c => {
-      // Remove itens que são Sacolas ou de campanhas excluídas
+      // Remove itens excluídos por regra fixa (SACOLA / campanhas especiais)
+      // e aplica filtros de TAG, Grupo TAG, Campanha e Produto
       const items = c[9].filter(it => {
         const prod = (D.prod[it[1]] || '').toUpperCase();
         if (prod.includes('SACOLA')) return false;
-        const camp = (D.camp[it[9]] || '').toUpperCase();
-        if (CAMPS_EXCL.some(ec => camp.includes(ec))) return false;
+        const camp = D.camp[it[9]] || '';
+        const campUp = camp.toUpperCase();
+        if (CAMPS_EXCL.some(ec => campUp.includes(ec))) return false;
+        // Filtros novos (itens)
+        if (filtProd && !prod.includes(filtProd)) return false;
+        if (filtCamp && camp !== filtCamp) return false;
+        const tag = D.mot[it[8]] || '';
+        if (filtTag && tag !== filtTag) return false;
+        if (filtGrupoTag && !filtTag && tagGrupo(tag) !== filtGrupoTag) return false;
         return true;
       });
       if (!items.length) return null;

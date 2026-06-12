@@ -154,13 +154,15 @@ with open(CSV_PATH, encoding='utf-8-sig', newline='') as f:
     i_data = col.get('DESC_Data Desconto', 5)
     i_sku = col.get('DESC_Codigo SKU', 7)
     i_produto = col.get('DESC_Descricao Produto', 8)
-    i_qtd = col.get('DESC_Qtd.', 9)
-    i_bruto = col.get('DESC_Valor Bruto', 10)
-    i_desc = col.get('DESC_Valor Desconto', 11)
-    i_liquido = col.get('DESC_Valor Liquido', 12)
-    i_chave = col.get('Chave Unica', 14)
-    i_hora = col.get('CUP_Hora', 15)
-    i_canal = col.get('CUP_Canal de venda', 16)
+    i_qtd      = col.get('DESC_Qtd.', 9)
+    i_bruto    = col.get('DESC_Valor Bruto', 10)   # fallback se CUP colunas ausentes
+    i_desc     = col.get('DESC_Valor Desconto', 11)
+    i_liquido  = col.get('DESC_Valor Liquido', 12)
+    i_chave    = col.get('Chave Unica', 14)
+    i_hora     = col.get('CUP_Hora', 15)
+    i_canal    = col.get('CUP_Canal de venda', 16)
+    i_cup_qtd  = col.get('CUP_Quantidade')   # quantidade correta (base Cupons, join por SKU)
+    i_cup_vuni = col.get('CUP_Valor Un.')    # valor unitário correto (base Cupons)
     i_motivo2 = col.get('Motivo Desconto 2', 23)
     i_consultor = col.get('Nome Consultor', 26)
 
@@ -217,19 +219,25 @@ with open(CSV_PATH, encoding='utf-8-sig', newline='') as f:
                 'codloja': norm_code(row[i_codloja]),
                 'sku': sku,
                 'produto': trunc(row[i_produto], 45),
-                # O bruto se REPETE em cada linha de desconto do mesmo SKU (descontos
-                # empilhados). Logo: bruto = MAIOR bruto de uma linha (contado 1x);
-                # descontos = SOMA por origem. Duplicidade real = linha (origem+desc)
-                # idêntica repetida -> 'sig' conta repetições por assinatura.
-                'mb': 0.0,   # maior bruto de uma linha
-                'mq': 0.0,   # maior qtd de uma linha
+                # bruto = CUP_Quantidade × CUP_Valor Un. (join por SKU garante a qtd certa)
+                # Como todas as origens do mesmo (chave,SKU) apontam para o mesmo
+                # registro de cupom, o valor é idêntico em todas — MAX é idempotente.
+                'mb': 0.0,   # bruto calculado (qtd × vuni); MAX como salvaguarda
+                'mq': 0.0,   # quantidade do cupom (base Cupons)
                 'p': 0.0, 'm': 0.0, 'f': 0.0,  # somas de desconto por origem
                 'sig': {},   # (origem,desc) -> contagem (p/ detectar repetição idêntica)
             }
 
         rec = sku_data[key]
-        bval = parse_br(row[i_bruto])
-        qval = parse_br(row[i_qtd])
+        # Calcula bruto como qtd × valor unitário (base Cupons, join por SKU)
+        if i_cup_qtd is not None and i_cup_vuni is not None and len(row) > max(i_cup_qtd, i_cup_vuni):
+            cup_qtd  = parse_br(row[i_cup_qtd])
+            cup_vuni = parse_br(row[i_cup_vuni])
+            bval = cup_qtd * cup_vuni if cup_qtd and cup_vuni else parse_br(row[i_bruto])
+            qval = cup_qtd if cup_qtd else parse_br(row[i_qtd])
+        else:
+            bval = parse_br(row[i_bruto])
+            qval = parse_br(row[i_qtd])
         if bval > rec['mb']:
             rec['mb'] = bval
         if qval > rec['mq']:
@@ -799,6 +807,10 @@ th.sortable .arr {{ color: var(--green); margin-left: 3px; }}
       <div class="filter-group"><label>Consultor (digite p/ buscar)</label><input type="text" id="det-cons" list="dl-det-cons" autocomplete="off" placeholder="Todos"><datalist id="dl-det-cons"></datalist></div>
       <div class="filter-group"><label>Nº Boleto / Cupom</label><input type="text" id="det-busca" placeholder="filtrar por boleto..."></div>
       <div class="filter-group"><label>Só com desconto</label><select id="det-comdesc"><option value="">Todos os cupons</option><option value="1">Apenas com desconto</option></select></div>
+      <div class="filter-group"><label>Grupo TAG</label><select id="det-grupo-tag" onchange="onDetGrupoTagChange()"><option value="">Todos os grupos</option></select></div>
+      <div class="filter-group"><label>TAG (detalhe)</label><select id="det-tag"><option value="">Todas as TAGs</option></select></div>
+      <div class="filter-group"><label>Campanha</label><select id="det-campanha"><option value="">Todas as campanhas</option></select></div>
+      <div class="filter-group"><label>Produto (busca)</label><input type="text" id="det-produto" placeholder="buscar produto..." autocomplete="off"></div>
       <button class="btn-search" id="det-btn" onclick="buscarDetalhe()">Buscar cupons</button>
     </div>
     <div id="det-status" class="no-data">Selecione o <b>Mês</b> e uma <b>Loja</b> (ou Regional/Praça/Cluster) e clique em <b>Buscar cupons</b>.</div>
@@ -1742,6 +1754,37 @@ function initDetFilters() {{
   fill('det-regional', D.regionais);
   fill('det-praca', D.pracas);
   fill('det-cluster', D.clusters);
+  // Grupo TAG (os 9 grupos fixos)
+  const grpSel = document.getElementById('det-grupo-tag');
+  TAG_GRUPOS.forEach(g => {{ const op = document.createElement('option'); op.value = g; op.textContent = g; grpSel.appendChild(op); }});
+  // TAG (detalhe) — todas as TAGs existentes nos dados, ordenadas
+  fillDetTagOptions('');
+  // Campanha — todas as campanhas existentes, ordenadas
+  const campSel = document.getElementById('det-campanha');
+  (D.camp || []).slice().sort((a,b) => a.localeCompare(b)).forEach(v => {{
+    if (!v) return;
+    const op = document.createElement('option'); op.value = v; op.textContent = v; campSel.appendChild(op);
+  }});
+}}
+
+// Preenche o dropdown TAG com as TAGs do grupo selecionado (ou todas se grupo='')
+function fillDetTagOptions(grupo) {{
+  const D = window.DET_BASE;
+  const sel = document.getElementById('det-tag');
+  const current = sel.value;
+  sel.innerHTML = '<option value="">Todas as TAGs</option>';
+  (D.mot || []).slice().sort((a,b) => a.localeCompare(b)).forEach(v => {{
+    if (!v) return;
+    if (grupo && tagGrupo(v) !== grupo) return;
+    const op = document.createElement('option'); op.value = v; op.textContent = v; sel.appendChild(op);
+  }});
+  // Tenta restaurar seleção anterior se ainda disponível
+  if (current && [...sel.options].some(o => o.value === current)) sel.value = current;
+}}
+
+function onDetGrupoTagChange() {{
+  const grupo = document.getElementById('det-grupo-tag').value;
+  fillDetTagOptions(grupo);
 }}
 
 function buscarDetalhe() {{
@@ -1766,6 +1809,10 @@ function buscarDetalhe() {{
   const ci = (consTxt !== '' && detConsByName.hasOwnProperty(consTxt)) ? detConsByName[consTxt] : -1;
   const busca = document.getElementById('det-busca').value.trim();
   const comdesc = document.getElementById('det-comdesc').value;
+  const filtGrupoTag = document.getElementById('det-grupo-tag').value;
+  const filtTag = document.getElementById('det-tag').value;
+  const filtCamp = document.getElementById('det-campanha').value;
+  const filtProd = document.getElementById('det-produto').value.trim().toUpperCase();
 
   loadMonth(mesV, () => {{
     const cup = (window.DET_M && window.DET_M[mesV]) || [];
@@ -1781,12 +1828,20 @@ function buscarDetalhe() {{
       if (comdesc === '1' && (c[6]+c[7]+c[8]) <= 0) return false;
       return true;
     }}).map(c => {{
-      // Remove itens que são Sacolas ou de campanhas excluídas
+      // Remove itens excluídos por regra fixa (SACOLA / campanhas especiais)
+      // e aplica filtros de TAG, Grupo TAG, Campanha e Produto
       const items = c[9].filter(it => {{
         const prod = (D.prod[it[1]] || '').toUpperCase();
         if (prod.includes('SACOLA')) return false;
-        const camp = (D.camp[it[9]] || '').toUpperCase();
-        if (CAMPS_EXCL.some(ec => camp.includes(ec))) return false;
+        const camp = D.camp[it[9]] || '';
+        const campUp = camp.toUpperCase();
+        if (CAMPS_EXCL.some(ec => campUp.includes(ec))) return false;
+        // Filtros novos (itens)
+        if (filtProd && !prod.includes(filtProd)) return false;
+        if (filtCamp && camp !== filtCamp) return false;
+        const tag = D.mot[it[8]] || '';
+        if (filtTag && tag !== filtTag) return false;
+        if (filtGrupoTag && !filtTag && tagGrupo(tag) !== filtGrupoTag) return false;
         return true;
       }});
       if (!items.length) return null;
