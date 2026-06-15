@@ -194,7 +194,7 @@ th.sortable .arr { color: var(--green); margin-left: 3px; }
   <div class="header-logo">A</div>
   <div class="header-text">
     <h1>Dashboard Auditoria de Descontos</h1>
-    <p>Período: Jan/2026 a Jun/2026 &nbsp;|&nbsp; Gerado em: 15/06/2026 14:11</p>
+    <p>Período: Jan/2026 a Jun/2026 &nbsp;|&nbsp; Gerado em: 15/06/2026 14:29</p>
   </div>
 </div>
 
@@ -826,6 +826,10 @@ function renderManual() {
   const totalBruto = rows.reduce((s, r) => s + r[HDR.bruto], 0);
   const totalPromo = rows.reduce((s, r) => s + r[HDR.promo], 0);
   const baseManual = totalBruto - totalPromo;   // Base_Manual = Bruto - Promocional
+  // Média da linha: calculada apenas sobre rows c/ desconto manual > 0
+  const rowsComManual = rows.filter(r => r[HDR.manual] > 0);
+  const _avgManualNum  = rowsComManual.reduce((s,r) => s + r[HDR.manual], 0);
+  const _avgManualDen  = rowsComManual.reduce((s,r) => s + Math.max(0, r[HDR.bruto] - r[HDR.promo]), 0);
   const cuponsManual = rows.filter(r => r[HDR.manual] > 0).reduce((s, r) => s + r[HDR.cnt], 0);
   const ticketManual = cuponsManual > 0 ? totalManual / cuponsManual : 0;
 
@@ -836,7 +840,6 @@ function renderManual() {
   kpiCard(kpiEl, 'Itens c/ Manual', cuponsManual.toLocaleString('pt-BR'), 'Itens com desconto manual', 'blue');
   kpiCard(kpiEl, 'Manual Médio / Item', brl(ticketManual), 'R$ manual ÷ itens c/ manual', 'green');
   // Líquido real somente das vendas que tiveram desconto manual
-  const rowsComManual = rows.filter(r => r[HDR.manual] > 0);
   const liqManual = rowsComManual.reduce((s, r) => s + r[HDR.bruto] - r[HDR.promo] - r[HDR.manual] - r[HDR.fidelidade], 0);
   kpiCard(kpiEl, 'Líquido c/ Desc. Manual', brl(liqManual), 'Bruto − Promo − Manual − Fidelidade (vendas c/ manual)', 'cyan');
 
@@ -847,7 +850,7 @@ function renderManual() {
     {id:'ch-m-pracas', title:'Praças por % Manual (Manual ÷ Bruto−Promo)', scroll:true}
   ]);
 
-  const avgManual = baseManual > 0 ? totalManual / baseManual * 100 : 0;
+  const avgManual = _avgManualDen > 0 ? _avgManualNum / _avgManualDen * 100 : 0;
 
   // Consultores por % manual (base pós-promo) — SEM gestores, todos, do menor p/ maior
   const byConsult = topManualByPct(semGestores(rows), HDR.consultor, 600, 0);
