@@ -194,13 +194,14 @@ th.sortable .arr { color: var(--green); margin-left: 3px; }
   <div class="header-logo">A</div>
   <div class="header-text">
     <h1>Dashboard Auditoria de Descontos</h1>
-    <p>Período: Jan/2026 a Jun/2026 &nbsp;|&nbsp; Gerado em: 15/06/2026 14:44</p>
+    <p>Período: Jan/2026 a Jun/2026 &nbsp;|&nbsp; Gerado em: 15/06/2026 15:38</p>
   </div>
 </div>
 
 <div class="tabs">
   <button class="tab-btn active" onclick="switchTab('manual')">⚠ Desconto Manual</button>
   <button class="tab-btn" onclick="switchTab('promo')">🏷 Desconto Promocional</button>
+  <button class="tab-btn" onclick="switchTab('promo2')">📊 % Itens c/ Promo</button>
   <button class="tab-btn" onclick="switchTab('fidelidade')">⭐ Desconto Fidelidade</button>
   <button class="tab-btn" onclick="switchTab('detalhe')">🧾 Detalhamento (cupom a cupom)</button>
 </div>
@@ -222,6 +223,12 @@ th.sortable .arr { color: var(--green); margin-left: 3px; }
       <div class="table-title">Top Campanhas Detalhadas</div>
       <div class="table-wrap" id="table-campanhas"></div>
     </div>
+  </div>
+
+  <div class="page" id="page-promo2">
+    <div class="kpi-row" id="kpi-promo2"></div>
+    <div class="charts-grid" id="charts-promo2-1"></div>
+    <div class="charts-grid" id="charts-promo2-2"></div>
   </div>
 
   <div class="page" id="page-fidelidade">
@@ -1435,15 +1442,98 @@ function toggleCup(k) {
   if (tg) tg.textContent = show ? '▼' : '▶';
 }
 
+// ==================== PAGE: % ITENS COM PROMO ====================
+// Métrica: promo_cnt / cnt = % de itens (linhas de SKU) que tiveram desconto promocional
+
+function topByPctItens(rows, groupIdx, topN) {
+  // Agrega promo_cnt e cnt por dimensão, calcula %
+  const agg = {};
+  rows.forEach(r => {
+    const k = r[groupIdx];
+    if (!(k in agg)) agg[k] = {key: k, promo_cnt: 0, cnt: 0};
+    agg[k].promo_cnt += r[HDR.promo_cnt] || 0;
+    agg[k].cnt       += r[HDR.cnt]       || 0;
+  });
+  return Object.values(agg)
+    .filter(x => x.cnt >= 10)
+    .map(x => ({key: x.key, pct: (x.promo_cnt / x.cnt) * 100, promo_cnt: x.promo_cnt, cnt: x.cnt}))
+    .sort((a, b) => b.pct - a.pct)
+    .slice(0, topN);
+}
+
+function topByPctItensFn(rows, keyFn, topN) {
+  const agg = {};
+  rows.forEach(r => {
+    const k = keyFn(r); if (!k) return;
+    if (!(k in agg)) agg[k] = {key: k, promo_cnt: 0, cnt: 0};
+    agg[k].promo_cnt += r[HDR.promo_cnt] || 0;
+    agg[k].cnt       += r[HDR.cnt]       || 0;
+  });
+  return Object.values(agg)
+    .filter(x => x.cnt >= 10)
+    .map(x => ({key: x.key, pct: (x.promo_cnt / x.cnt) * 100, promo_cnt: x.promo_cnt, cnt: x.cnt}))
+    .sort((a, b) => b.pct - a.pct)
+    .slice(0, topN);
+}
+
+function renderPromo2() {
+  const rows = filteredRows();
+
+  const totalPromo_cnt = rows.reduce((s, r) => s + (r[HDR.promo_cnt] || 0), 0);
+  const totalCnt       = rows.reduce((s, r) => s + (r[HDR.cnt]       || 0), 0);
+  const pctGeral = totalCnt > 0 ? (totalPromo_cnt / totalCnt * 100) : 0;
+
+  const kpiEl = document.getElementById('kpi-promo2');
+  kpiEl.innerHTML = '';
+  const kpis = [
+    {label:'Itens c/ Promo', val: totalPromo_cnt.toLocaleString('pt-BR'), sub: 'itens com desc. promocional'},
+    {label:'Total de Itens', val: totalCnt.toLocaleString('pt-BR'), sub: 'itens vendidos no período'},
+    {label:'% Itens c/ Promo (rede)', val: pctGeral.toFixed(1).replace('.',',') + '%', sub: 'share de itens com promo'},
+  ];
+  kpis.forEach(k => {
+    const d = document.createElement('div'); d.className = 'kpi-card';
+    d.innerHTML = `<div class="kpi-val">${k.val}</div><div class="kpi-label">${k.label}</div><div class="kpi-sub">${k.sub}</div>`;
+    kpiEl.appendChild(d);
+  });
+
+  // Row 1: Praça e Loja
+  chartArea('charts-promo2-1', [
+    {id:'ch-p2-pracas', title:'Praças por % Itens com Desconto Promocional', scroll:true},
+    {id:'ch-p2-lojas',  title:'Lojas por % Itens com Desconto Promocional — role p/ ver todas', scroll:true},
+  ]);
+
+  const byPraca2 = topByPctItensFn(rows, r => LK.loja_praca[r[HDR.loja]], 200);
+  hbar('ch-p2-pracas', byPraca2.map(x=>x.key), byPraca2.map(x=>x.pct), '#00AAFF', true, byPraca2, avgOfBars(byPraca2));
+
+  const byLoja2 = topByPctItens(rows, HDR.loja, 600);
+  hbar('ch-p2-lojas', byLoja2.map(x=>LK.loja[x.key]), byLoja2.map(x=>x.pct), '#3355FF', true, byLoja2, avgOfBars(byLoja2));
+
+  // Row 2: Gestor e Consultor
+  chartArea('charts-promo2-2', [
+    {id:'ch-p2-gestores',   title:'Gestores por % Itens com Desconto Promocional', scroll:true},
+    {id:'ch-p2-consult', title:'Consultores por % Itens com Desconto Promocional — role p/ ver todos', scroll:true},
+  ]);
+
+  // Gestores = consultores marcados como gestor
+  const cg = LK.cons_gestor || [];
+  const rowsGestor = rows.filter(r => cg[r[HDR.consultor]]);
+  const byGestor2  = topByPctItens(rowsGestor, HDR.consultor, 100);
+  hbar('ch-p2-gestores', byGestor2.map(x=>LK.cons[x.key]), byGestor2.map(x=>x.pct), '#FF9F1C', true, byGestor2, avgOfBars(byGestor2));
+
+  const byConsult2 = topByPctItens(semGestores(rows), HDR.consultor, 600);
+  hbar('ch-p2-consult', byConsult2.map(x=>LK.cons[x.key]), byConsult2.map(x=>x.pct), '#2ECC8A', true, byConsult2, avgOfBars(byConsult2));
+}
+
 function renderCurrentPage() {
   if (currentPage === 'manual') renderManual();
   else if (currentPage === 'promo') renderPromo();
+  else if (currentPage === 'promo2') renderPromo2();
   else if (currentPage === 'fidelidade') renderFidelidade();
 }
 
 function switchTab(page) {
   currentPage = page;
-  const pages = ['manual','promo','fidelidade','detalhe'];
+  const pages = ['manual','promo','promo2','fidelidade','detalhe'];
   document.querySelectorAll('.tab-btn').forEach((b, i) => {
     b.classList.toggle('active', pages[i] === page);
   });
