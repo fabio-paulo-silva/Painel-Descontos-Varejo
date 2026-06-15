@@ -194,7 +194,7 @@ th.sortable .arr { color: var(--green); margin-left: 3px; }
   <div class="header-logo">A</div>
   <div class="header-text">
     <h1>Dashboard Auditoria de Descontos</h1>
-    <p>Período: Jan/2026 a Jun/2026 &nbsp;|&nbsp; Gerado em: 15/06/2026 14:29</p>
+    <p>Período: Jan/2026 a Jun/2026 &nbsp;|&nbsp; Gerado em: 15/06/2026 14:44</p>
   </div>
 </div>
 
@@ -466,6 +466,14 @@ function brl(v) {
 function pct(a, b) {
   if (!b) return '0,0%';
   return ((a/b)*100).toFixed(1).replace('.',',') + '%';
+}
+// Média das barras de um array de {pct} ou de valores numéricos diretos
+// Usado para a linha de média de cada gráfico — cada um usa seu próprio conjunto de dados
+function avgOfBars(arr) {
+  if (!arr || !arr.length) return null;
+  const vals = typeof arr[0] === 'object' ? arr.map(x => x.pct) : arr.filter(v => v > 0);
+  if (!vals.length) return null;
+  return vals.reduce((s, v) => s + v, 0) / vals.length;
 }
 
 function destroyChart(id) {
@@ -850,19 +858,17 @@ function renderManual() {
     {id:'ch-m-pracas', title:'Praças por % Manual (Manual ÷ Bruto−Promo)', scroll:true}
   ]);
 
-  const avgManual = _avgManualDen > 0 ? _avgManualNum / _avgManualDen * 100 : 0;
-
   // Consultores por % manual (base pós-promo) — SEM gestores, todos, do menor p/ maior
   const byConsult = topManualByPct(semGestores(rows), HDR.consultor, 600, 0);
-  hbar('ch-m-consult', byConsult.map(x=>LK.cons[x.key]), byConsult.map(x=>x.pct), '#2ECC8A', true, byConsult, avgManual);
+  hbar('ch-m-consult', byConsult.map(x=>LK.cons[x.key]), byConsult.map(x=>x.pct), '#2ECC8A', true, byConsult, avgOfBars(byConsult));
 
   // Lojas por % manual (base pós-promo) — todas, do menor p/ maior
   const byLoja = topManualByPct(rows, HDR.loja, 600, 0);
-  hbar('ch-m-lojas', byLoja.map(x=>LK.loja[x.key]), byLoja.map(x=>x.pct), '#3355FF', true, byLoja, avgManual);
+  hbar('ch-m-lojas', byLoja.map(x=>LK.loja[x.key]), byLoja.map(x=>x.pct), '#3355FF', true, byLoja, avgOfBars(byLoja));
 
   // Praças por % manual
   const byPracaM = topManualByPctFn(rows, r => LK.loja_praca[r[HDR.loja]], 200, 0);
-  hbar('ch-m-pracas', byPracaM.map(x=>x.key), byPracaM.map(x=>x.pct), '#00AAFF', true, byPracaM, avgManual);
+  hbar('ch-m-pracas', byPracaM.map(x=>x.key), byPracaM.map(x=>x.pct), '#00AAFF', true, byPracaM, avgOfBars(byPracaM));
 
   // Charts row 2
   chartArea('charts-manual-2', [
@@ -874,7 +880,7 @@ function renderManual() {
 
   // Itens por % manual (rede, base pós-promo) — todos, do menor p/ maior
   const itM = topItensByPct('manual', 600);
-  hbar('ch-m-itens', itM.map(x=>x.name), itM.map(x=>x.pct), '#2ECC8A', true, itM, avgManual);
+  hbar('ch-m-itens', itM.map(x=>x.name), itM.map(x=>x.pct), '#2ECC8A', true, itM, avgOfBars(itM));
 
   // TAG — agrupada ou detalhada conforme filtro Grupo TAG
   const motivoM = tagChartData(rows, 'manual', 20);
@@ -884,7 +890,7 @@ function renderManual() {
   const byCanal = aggregate(rows.filter(r => r[HDR.bruto] > 0), HDR.canal, ['manual','bruto','promo'])
     .sort((a,b) => b.bruto - a.bruto).slice(0, 10);
   const canalPct = byCanal.map(x => { const base = x.bruto - x.promo; return base > 0 ? (x.manual/base)*100 : 0; });
-  vbar('ch-m-canal', byCanal.map(x => LK.canal[x.key]), canalPct, '#00AAFF', true, avgManual);
+  vbar('ch-m-canal', byCanal.map(x => LK.canal[x.key]), canalPct, '#00AAFF', true, avgOfBars(canalPct));
 
   // Mes line
   const byMes = aggregate(rows, HDR.mes, ['manual']).sort((a,b) => a.key < b.key ? -1 : 1);
@@ -1013,17 +1019,15 @@ function renderPromo() {
     {id:'ch-p-pracas', title:'Praças por % Promo (sobre bruto)', scroll:true}
   ]);
 
-  const avgPromo = totalBruto > 0 ? totalPromo / totalBruto * 100 : 0;
-
   const byCamp = topByPct(rows.filter(r => LK.campanha[r[HDR.campanha]]), HDR.campanha, 'promo', 600, 0);
-  hbar('ch-p-camp', byCamp.map(x => LK.campanha[x.key]), byCamp.map(x => x.pct), '#2ECC8A', true, byCamp, avgPromo);
+  hbar('ch-p-camp', byCamp.map(x => LK.campanha[x.key]), byCamp.map(x => x.pct), '#2ECC8A', true, byCamp, avgOfBars(byCamp));
 
   const byLoja = topByPct(rows, HDR.loja, 'promo', 600, 0);
-  hbar('ch-p-lojas', byLoja.map(x => LK.loja[x.key]), byLoja.map(x => x.pct), '#3355FF', true, byLoja, avgPromo);
+  hbar('ch-p-lojas', byLoja.map(x => LK.loja[x.key]), byLoja.map(x => x.pct), '#3355FF', true, byLoja, avgOfBars(byLoja));
 
   // Praças por % promo
   const byPracaP = topByPctFn(rows, r => LK.loja_praca[r[HDR.loja]], 'promo', 200, 0);
-  hbar('ch-p-pracas', byPracaP.map(x=>x.key), byPracaP.map(x=>x.pct), '#00AAFF', true, byPracaP, avgPromo);
+  hbar('ch-p-pracas', byPracaP.map(x=>x.key), byPracaP.map(x=>x.pct), '#00AAFF', true, byPracaP, avgOfBars(byPracaP));
 
   chartArea('charts-promo-2', [
     {id:'ch-p-itens', title:'Itens por % Promocional (rede) — role p/ ver todos', scroll:true},
@@ -1034,7 +1038,7 @@ function renderPromo() {
 
   // Itens por % promocional (rede) — todos, do menor p/ maior
   const itP = topItensByPct('promo', 600);
-  hbar('ch-p-itens', itP.map(x=>x.name), itP.map(x=>x.pct), '#2ECC8A', true, itP, avgPromo);
+  hbar('ch-p-itens', itP.map(x=>x.name), itP.map(x=>x.pct), '#2ECC8A', true, itP, avgOfBars(itP));
 
   // Campanha por R$ promo (Top 15)
   const byCamp2 = aggregate(rows.filter(r => r[HDR.promo] > 0 && LK.campanha[r[HDR.campanha]]), HDR.campanha, ['promo'])
@@ -1082,18 +1086,16 @@ function renderFidelidade() {
     {id:'ch-f-pracas', title:'Praças por % Fidelidade (sobre bruto)', scroll:true}
   ]);
 
-  const avgFid = totalBruto > 0 ? totalFid / totalBruto * 100 : 0;
-
   const byLoja = topByPct(rows, HDR.loja, 'fidelidade', 600, 0);
-  hbar('ch-f-lojas', byLoja.map(x => LK.loja[x.key]), byLoja.map(x => x.pct), '#2ECC8A', true, byLoja, avgFid);
+  hbar('ch-f-lojas', byLoja.map(x => LK.loja[x.key]), byLoja.map(x => x.pct), '#2ECC8A', true, byLoja, avgOfBars(byLoja));
 
   // Consultores SEM gestores — todos, do menor p/ maior
   const byConsult = topByPct(semGestores(rows), HDR.consultor, 'fidelidade', 600, 0);
-  hbar('ch-f-consult', byConsult.map(x => LK.cons[x.key]), byConsult.map(x => x.pct), '#3355FF', true, byConsult, avgFid);
+  hbar('ch-f-consult', byConsult.map(x => LK.cons[x.key]), byConsult.map(x => x.pct), '#3355FF', true, byConsult, avgOfBars(byConsult));
 
   // Praças por % fidelidade
   const byPracaF = topByPctFn(rows, r => LK.loja_praca[r[HDR.loja]], 'fidelidade', 200, 0);
-  hbar('ch-f-pracas', byPracaF.map(x=>x.key), byPracaF.map(x=>x.pct), '#00AAFF', true, byPracaF, avgFid);
+  hbar('ch-f-pracas', byPracaF.map(x=>x.key), byPracaF.map(x=>x.pct), '#00AAFF', true, byPracaF, avgOfBars(byPracaF));
 
   chartArea('charts-fid-2', [
     {id:'ch-f-motivo', title:'R$ Fidelidade por Grupo TAG (clique Grupo TAG p/ detalhar)', scroll:true},
@@ -1111,7 +1113,7 @@ function renderFidelidade() {
   const byCanal = aggregate(rows.filter(r => r[HDR.bruto] > 0), HDR.canal, ['fidelidade','bruto'])
     .sort((a,b) => b.bruto - a.bruto).slice(0, 10);
   const canalPct = byCanal.map(x => x.bruto > 0 ? (x.fidelidade/x.bruto)*100 : 0);
-  vbar('ch-f-canal', byCanal.map(x => LK.canal[x.key]), canalPct, '#4DE8AA', true, avgFid);
+  vbar('ch-f-canal', byCanal.map(x => LK.canal[x.key]), canalPct, '#4DE8AA', true, avgOfBars(canalPct));
 
   // F5 table
   const f5Data = aggregate(rows.filter(r => r[HDR.f5_cnt] > 0), HDR.loja, ['f5_cnt','fidelidade','bruto'])
