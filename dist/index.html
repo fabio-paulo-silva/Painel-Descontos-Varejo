@@ -194,7 +194,7 @@ th.sortable .arr { color: var(--green); margin-left: 3px; }
   <div class="header-logo">A</div>
   <div class="header-text">
     <h1>Dashboard Auditoria de Descontos</h1>
-    <p>Período: Jan/2026 a Jun/2026 &nbsp;|&nbsp; Gerado em: 15/06/2026 15:38</p>
+    <p>Período: Jan/2026 a Jun/2026 &nbsp;|&nbsp; Gerado em: 16/06/2026 09:32</p>
   </div>
 </div>
 
@@ -1510,15 +1510,14 @@ function renderPromo2() {
 
   // Row 2: Gestor e Consultor
   chartArea('charts-promo2-2', [
-    {id:'ch-p2-gestores',   title:'Gestores por % Itens com Desconto Promocional', scroll:true},
+    {id:'ch-p2-gestores',   title:'Gestores por % Itens c/ Promo (itens das lojas sob sua gestão)', scroll:true},
     {id:'ch-p2-consult', title:'Consultores por % Itens com Desconto Promocional — role p/ ver todos', scroll:true},
   ]);
 
-  // Gestores = consultores marcados como gestor
-  const cg = LK.cons_gestor || [];
-  const rowsGestor = rows.filter(r => cg[r[HDR.consultor]]);
-  const byGestor2  = topByPctItens(rowsGestor, HDR.consultor, 100);
-  hbar('ch-p2-gestores', byGestor2.map(x=>LK.cons[x.key]), byGestor2.map(x=>x.pct), '#FF9F1C', true, byGestor2, avgOfBars(byGestor2));
+  // Gestores: agrupa todos os itens pela loja, usa o gestor responsável pela loja (via dCentros)
+  // Cada item é contado nas lojas do gestor — independente de quem vendeu
+  const byGestor2 = topByPctItensFn(rows, r => LK.loja_gestor[r[HDR.loja]] || null, 100);
+  hbar('ch-p2-gestores', byGestor2.map(x=>x.key), byGestor2.map(x=>x.pct), '#FF9F1C', true, byGestor2, avgOfBars(byGestor2));
 
   const byConsult2 = topByPctItens(semGestores(rows), HDR.consultor, 600);
   hbar('ch-p2-consult', byConsult2.map(x=>LK.cons[x.key]), byConsult2.map(x=>x.pct), '#2ECC8A', true, byConsult2, avgOfBars(byConsult2));
