@@ -194,12 +194,13 @@ th.sortable .arr { color: var(--green); margin-left: 3px; }
   <div class="header-logo">A</div>
   <div class="header-text">
     <h1>Dashboard Auditoria de Descontos</h1>
-    <p>Período: Jan/2026 a Jun/2026 &nbsp;|&nbsp; Gerado em: 16/06/2026 09:32</p>
+    <p>Período: Jan/2026 a Jun/2026 &nbsp;|&nbsp; Gerado em: 16/06/2026 09:50</p>
   </div>
 </div>
 
 <div class="tabs">
   <button class="tab-btn active" onclick="switchTab('manual')">⚠ Desconto Manual</button>
+  <button class="tab-btn" onclick="switchTab('manual2')">📊 % Itens c/ Manual</button>
   <button class="tab-btn" onclick="switchTab('promo')">🏷 Desconto Promocional</button>
   <button class="tab-btn" onclick="switchTab('promo2')">📊 % Itens c/ Promo</button>
   <button class="tab-btn" onclick="switchTab('fidelidade')">⭐ Desconto Fidelidade</button>
@@ -223,6 +224,13 @@ th.sortable .arr { color: var(--green); margin-left: 3px; }
       <div class="table-title">Top Campanhas Detalhadas</div>
       <div class="table-wrap" id="table-campanhas"></div>
     </div>
+  </div>
+
+  <div class="page" id="page-manual2">
+    <div class="kpi-row" id="kpi-manual2"></div>
+    <div class="charts-grid" id="charts-manual2-1"></div>
+    <div class="charts-grid" id="charts-manual2-2"></div>
+    <div class="charts-grid" id="charts-manual2-3"></div>
   </div>
 
   <div class="page" id="page-promo2">
@@ -1442,36 +1450,116 @@ function toggleCup(k) {
   if (tg) tg.textContent = show ? '▼' : '▶';
 }
 
+// ==================== PAGE: % ITENS COM MANUAL ====================
+// Métrica: manual_cnt / cnt = % de itens que tiveram desconto manual
+// Gráfico de item: ITEMS[4]=cnt_manual / ITEMS[3]=cnt_total por produto
+
+function topItensByCnt(metric, topN) {
+  // metric: 'manual' usa ITEMS[4]/ITEMS[3]; 'promo' usa ITEMS[6]/ITEMS[3]
+  // ITEMS layout: [prodIdx, mes, bruto, promo, manual, cnt_total, cnt_manual, cnt_promo]
+  const mesF  = activeFilters.mes;
+  const itemF = activeFilters.item !== '' ? +activeFilters.item : -1;
+  const agg = {};
+  for (let i = 0; i < ITEMS.length; i++) {
+    const it = ITEMS[i];
+    if (mesF  && it[1] !== mesF)  continue;
+    if (itemF >= 0 && it[0] !== itemF) continue;
+    const k = it[0];
+    if (!agg[k]) agg[k] = {cnt: 0, cnt_m: 0, cnt_p: 0};
+    agg[k].cnt   += (it[5] || 0);
+    agg[k].cnt_m += (it[6] || 0);
+    agg[k].cnt_p += (it[7] || 0);
+  }
+  const cntKey = metric === 'manual' ? 'cnt_m' : 'cnt_p';
+  return Object.keys(agg)
+    .filter(k => agg[k].cnt >= 5 && agg[k][cntKey] > 0)
+    .map(k => ({name: ITEMS_PROD[k], pct: agg[k][cntKey] / agg[k].cnt * 100,
+                cnt_desc: agg[k][cntKey], cnt: agg[k].cnt}))
+    .sort((a, b) => b.pct - a.pct)
+    .slice(0, topN || 15);
+}
+
+function renderManual2() {
+  const rows = filteredRows();
+
+  const totalManual_cnt = rows.reduce((s, r) => s + (r[HDR.manual_cnt] || 0), 0);
+  const totalCnt        = rows.reduce((s, r) => s + (r[HDR.cnt]        || 0), 0);
+  const pctGeral = totalCnt > 0 ? (totalManual_cnt / totalCnt * 100) : 0;
+
+  const kpiEl = document.getElementById('kpi-manual2');
+  kpiEl.innerHTML = '';
+  [
+    {label:'Itens c/ Manual', val: totalManual_cnt.toLocaleString('pt-BR'), sub: 'itens com desc. manual'},
+    {label:'Total de Itens',  val: totalCnt.toLocaleString('pt-BR'),        sub: 'itens vendidos no período'},
+    {label:'% Itens c/ Manual (rede)', val: pctGeral.toFixed(1).replace('.',',') + '%', sub: 'share de itens com manual'},
+  ].forEach(k => {
+    const d = document.createElement('div'); d.className = 'kpi-card';
+    d.innerHTML = `<div class="kpi-val">${k.val}</div><div class="kpi-label">${k.label}</div><div class="kpi-sub">${k.sub}</div>`;
+    kpiEl.appendChild(d);
+  });
+
+  // Row 1: Praça e Loja
+  chartArea('charts-manual2-1', [
+    {id:'ch-m2-pracas', title:'Praças por % Itens com Desconto Manual', scroll:true},
+    {id:'ch-m2-lojas',  title:'Lojas por % Itens com Desconto Manual — role p/ ver todas', scroll:true},
+  ]);
+  const byPracaM2 = topByPctItensFn(rows, r => LK.loja_praca[r[HDR.loja]], 200, 'manual_cnt');
+  hbar('ch-m2-pracas', byPracaM2.map(x=>x.key), byPracaM2.map(x=>x.pct), '#00AAFF', true, byPracaM2, avgOfBars(byPracaM2));
+
+  const byLojaM2 = topByPctItens(rows, HDR.loja, 600, 'manual_cnt');
+  hbar('ch-m2-lojas', byLojaM2.map(x=>LK.loja[x.key]), byLojaM2.map(x=>x.pct), '#3355FF', true, byLojaM2, avgOfBars(byLojaM2));
+
+  // Row 2: Gestor e Consultor
+  chartArea('charts-manual2-2', [
+    {id:'ch-m2-gestores', title:'Gestores por % Itens c/ Manual (lojas sob sua gestão)', scroll:true},
+    {id:'ch-m2-consult',  title:'Consultores por % Itens com Desconto Manual — role p/ ver todos', scroll:true},
+  ]);
+  const byGestorM2 = topByPctItensFn(rows, r => LK.loja_gestor[r[HDR.loja]] || null, 100, 'manual_cnt');
+  hbar('ch-m2-gestores', byGestorM2.map(x=>x.key), byGestorM2.map(x=>x.pct), '#FF9F1C', true, byGestorM2, avgOfBars(byGestorM2));
+
+  const byConsultM2 = topByPctItens(semGestores(rows), HDR.consultor, 600, 'manual_cnt');
+  hbar('ch-m2-consult', byConsultM2.map(x=>LK.cons[x.key]), byConsultM2.map(x=>x.pct), '#2ECC8A', true, byConsultM2, avgOfBars(byConsultM2));
+
+  // Row 3: Item
+  chartArea('charts-manual2-3', [
+    {id:'ch-m2-itens', title:'Produtos com maior % de ocorrência de Desconto Manual — role p/ ver todos', scroll:true},
+  ]);
+  const itM2 = topItensByCnt('manual', 600);
+  hbar('ch-m2-itens', itM2.map(x=>x.name), itM2.map(x=>x.pct), '#2ECC8A', true, itM2, avgOfBars(itM2));
+}
+
 // ==================== PAGE: % ITENS COM PROMO ====================
 // Métrica: promo_cnt / cnt = % de itens (linhas de SKU) que tiveram desconto promocional
 
-function topByPctItens(rows, groupIdx, topN) {
-  // Agrega promo_cnt e cnt por dimensão, calcula %
+// cntField: 'promo_cnt' ou 'manual_cnt' — qual campo de contagem usar
+function topByPctItens(rows, groupIdx, topN, cntField) {
+  const cf = cntField || 'promo_cnt';
   const agg = {};
   rows.forEach(r => {
     const k = r[groupIdx];
-    if (!(k in agg)) agg[k] = {key: k, promo_cnt: 0, cnt: 0};
-    agg[k].promo_cnt += r[HDR.promo_cnt] || 0;
-    agg[k].cnt       += r[HDR.cnt]       || 0;
+    if (!(k in agg)) agg[k] = {key: k, desc_cnt: 0, cnt: 0};
+    agg[k].desc_cnt += r[HDR[cf]] || 0;
+    agg[k].cnt      += r[HDR.cnt] || 0;
   });
   return Object.values(agg)
     .filter(x => x.cnt >= 10)
-    .map(x => ({key: x.key, pct: (x.promo_cnt / x.cnt) * 100, promo_cnt: x.promo_cnt, cnt: x.cnt}))
+    .map(x => ({key: x.key, pct: (x.desc_cnt / x.cnt) * 100, desc_cnt: x.desc_cnt, cnt: x.cnt}))
     .sort((a, b) => b.pct - a.pct)
     .slice(0, topN);
 }
 
-function topByPctItensFn(rows, keyFn, topN) {
+function topByPctItensFn(rows, keyFn, topN, cntField) {
+  const cf = cntField || 'promo_cnt';
   const agg = {};
   rows.forEach(r => {
     const k = keyFn(r); if (!k) return;
-    if (!(k in agg)) agg[k] = {key: k, promo_cnt: 0, cnt: 0};
-    agg[k].promo_cnt += r[HDR.promo_cnt] || 0;
-    agg[k].cnt       += r[HDR.cnt]       || 0;
+    if (!(k in agg)) agg[k] = {key: k, desc_cnt: 0, cnt: 0};
+    agg[k].desc_cnt += r[HDR[cf]] || 0;
+    agg[k].cnt      += r[HDR.cnt] || 0;
   });
   return Object.values(agg)
     .filter(x => x.cnt >= 10)
-    .map(x => ({key: x.key, pct: (x.promo_cnt / x.cnt) * 100, promo_cnt: x.promo_cnt, cnt: x.cnt}))
+    .map(x => ({key: x.key, pct: (x.desc_cnt / x.cnt) * 100, desc_cnt: x.desc_cnt, cnt: x.cnt}))
     .sort((a, b) => b.pct - a.pct)
     .slice(0, topN);
 }
@@ -1525,6 +1613,7 @@ function renderPromo2() {
 
 function renderCurrentPage() {
   if (currentPage === 'manual') renderManual();
+  else if (currentPage === 'manual2') renderManual2();
   else if (currentPage === 'promo') renderPromo();
   else if (currentPage === 'promo2') renderPromo2();
   else if (currentPage === 'fidelidade') renderFidelidade();
@@ -1532,7 +1621,7 @@ function renderCurrentPage() {
 
 function switchTab(page) {
   currentPage = page;
-  const pages = ['manual','promo','promo2','fidelidade','detalhe'];
+  const pages = ['manual','manual2','promo','promo2','fidelidade','detalhe'];
   document.querySelectorAll('.tab-btn').forEach((b, i) => {
     b.classList.toggle('active', pages[i] === page);
   });
