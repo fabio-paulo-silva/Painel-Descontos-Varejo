@@ -161,8 +161,9 @@ with open(CSV_PATH, encoding='utf-8-sig', newline='') as f:
     i_chave    = col.get('Chave Unica', 14)
     i_hora     = col.get('CUP_Hora', 15)
     i_canal    = col.get('CUP_Canal de venda', 16)
-    i_cup_qtd  = col.get('CUP_Quantidade')   # quantidade correta (base Cupons, join por SKU)
-    i_cup_vuni = col.get('CUP_Valor Un.')    # valor unitário correto (base Cupons)
+    i_linha    = col.get('DESC_Linha', 6)     # linha física do cupom (dedup de bruto por linha)
+    i_cup_qtd  = col.get('CUP_Quantidade')   # mantido para compatibilidade (não mais usado para bruto)
+    i_cup_vuni = col.get('CUP_Valor Un.')
     i_motivo2 = col.get('Motivo Desconto 2', 23)
     i_consultor = col.get('Nome Consultor', 26)
 
@@ -219,29 +220,24 @@ with open(CSV_PATH, encoding='utf-8-sig', newline='') as f:
                 'codloja': norm_code(row[i_codloja]),
                 'sku': sku,
                 'produto': trunc(row[i_produto], 45),
-                # bruto = CUP_Quantidade × CUP_Valor Un. (join por SKU garante a qtd certa)
-                # Como todas as origens do mesmo (chave,SKU) apontam para o mesmo
-                # registro de cupom, o valor é idêntico em todas — MAX é idempotente.
-                'mb': 0.0,   # bruto calculado (qtd × vuni); MAX como salvaguarda
-                'mq': 0.0,   # quantidade do cupom (base Cupons)
+                # bruto = soma de DESC_Valor Bruto por linha distinta (cada linha física = um item)
+                # Origens distintas do mesmo SKU compartilham a mesma Linha → MAX por linha
+                'bl': {},    # linha -> bruto (para sum(distinct linhas))
+                'qtd': 0.0,  # quantidade (MAX entre origens)
                 'p': 0.0, 'm': 0.0, 'f': 0.0,  # somas de desconto por origem
                 'sig': {},   # (origem,desc) -> contagem (p/ detectar repetição idêntica)
             }
 
         rec = sku_data[key]
-        # Calcula bruto como qtd × valor unitário (base Cupons, join por SKU)
-        if i_cup_qtd is not None and i_cup_vuni is not None and len(row) > max(i_cup_qtd, i_cup_vuni):
-            cup_qtd  = parse_br(row[i_cup_qtd])
-            cup_vuni = parse_br(row[i_cup_vuni])
-            bval = cup_qtd * cup_vuni if cup_qtd and cup_vuni else parse_br(row[i_bruto])
-            qval = cup_qtd if cup_qtd else parse_br(row[i_qtd])
-        else:
-            bval = parse_br(row[i_bruto])
-            qval = parse_br(row[i_qtd])
-        if bval > rec['mb']:
-            rec['mb'] = bval
-        if qval > rec['mq']:
-            rec['mq'] = qval
+        # Bruto: soma por linha física distinta (DESC_Linha).
+        # Origens distintas do mesmo SKU repetem o mesmo bruto → MAX por linha evita duplicação.
+        linha = row[i_linha].strip() if i_linha is not None and len(row) > i_linha else ''
+        bval = parse_br(row[i_bruto])
+        if bval > 0:
+            rec['bl'][linha] = max(rec['bl'].get(linha, 0), bval)
+        qval = parse_br(row[i_qtd])
+        if qval > rec['qtd']:
+            rec['qtd'] = qval
         if origem == 'PROMOCIONAL':
             rec['p'] += desc_val; oc = 'P'
         elif origem == 'MANUAL':
@@ -259,13 +255,13 @@ print(f"Total coupon-SKU únicos: {len(sku_data):,}")
 # inflavam o desconto). Bruto real = maior soma de bruto entre as origens (cada origem
 # repete o bruto do item; somar entre origens multiplicaria). Detecta duplicidade.
 print("Finalizando SKUs (correção de duplicidade)...")
-item_acc = defaultdict(lambda: [0.0, 0.0, 0.0])  # (mes, sku) -> [bruto, promo, manual]
+item_acc = defaultdict(lambda: [0.0, 0.0, 0.0, 0, 0, 0])  # (mes, sku) -> [bruto, promo, manual, cnt, cnt_manual, cnt_promo]
 item_name = {}
 dup_total = 0
 for rec in sku_data.values():
-    bruto = rec['mb']
+    bruto = sum(rec['bl'].values()) if rec['bl'] else 0.0
     promo = rec['p']; manual = rec['m']; fidelidade = rec['f']
-    qtd = rec['mq']
+    qtd = rec['qtd']
     scans = max(rec['sig'].values()) if rec['sig'] else 1  # maior repetição idêntica
     rec['bruto'] = bruto
     rec['promo'] = promo
@@ -276,11 +272,14 @@ for rec in sku_data.values():
     rec['dup'] = 1 if scans > 1 else 0
     if rec['dup']:
         dup_total += 1
-    del rec['mb'], rec['mq'], rec['p'], rec['m'], rec['f'], rec['sig']
+    del rec['bl'], rec['p'], rec['m'], rec['f'], rec['sig']
     # acumula análise por item (rede), separável por mês
     k = (rec['mes'], rec['sku'])
     ia = item_acc[k]
     ia[0] += bruto; ia[1] += promo; ia[2] += manual
+    ia[3] += 1                          # cnt_total
+    if manual > 0: ia[4] += 1          # cnt_manual
+    if promo  > 0: ia[5] += 1          # cnt_promo
     if rec['sku'] not in item_name:
         item_name[rec['sku']] = rec['produto']
 
@@ -292,13 +291,14 @@ for (mes, sku), ia in item_acc.items():
     nm = item_name.get(sku, sku)
     if nm not in items_prod_idx:
         items_prod_idx[nm] = len(ITEMS_PROD); ITEMS_PROD.append(nm)
-    ITEMS.append([items_prod_idx[nm], mes, round(ia[0], 2), round(ia[1], 2), round(ia[2], 2)])
+    ITEMS.append([items_prod_idx[nm], mes, round(ia[0], 2), round(ia[1], 2), round(ia[2], 2),
+                  ia[3], ia[4], ia[5]])
 print(f"Itens (mes×sku) para análise de %: {len(ITEMS):,}")
 
 # Second pass: aggregate to (mes, loja, consultor, canal, motivo2, campanha)
 # ROWS header: mes, loja, consultor, canal, motivo2, campanha, bruto, promo, manual, fidelidade, cnt, viol_a, viol_c, f5_cnt
-group_data = defaultdict(lambda: [0.0, 0.0, 0.0, 0.0, 0, 0, 0, 0, 0, 0])
-# indices:                                                bruto promo manual fid cnt va vc f5 f60 dup
+group_data = defaultdict(lambda: [0.0, 0.0, 0.0, 0.0, 0, 0, 0, 0, 0, 0, 0, 0])
+# indices:                                                bruto promo manual fid cnt va vc f5 f60 dup manual_cnt promo_cnt
 
 violations = []      # top violations (A/C) for table
 exceptions_f = []    # Regra F: desconto total > 60% do bruto (qualquer origem)
@@ -345,6 +345,8 @@ for (chave, sku), rec in sku_data.items():
     g[7] += f5
     g[8] += viol_f
     g[9] += rec['dup']
+    g[10] += (1 if manual > 0 else 0)
+    g[11] += (1 if promo  > 0 else 0)
 
     # Collect violations
     if (viol_a or viol_c) and manual > 0:
@@ -495,7 +497,8 @@ print(f"Detalhamento particionado em {len(cup_by_month)} mes(es) na pasta dist/"
 # Colunas: mes, data(ISO), lojaIdx, consIdx, canalIdx, motivoIdx, campIdx, bruto, promo,
 #          manual, fidelidade, cnt, viol_a, viol_c, f5_cnt, f60_cnt, dup_cnt
 ROWS_HEADER = ["mes","data","loja","consultor","canal","motivo2","campanha",
-               "bruto","promo","manual","fidelidade","cnt","viol_a","viol_c","f5_cnt","f60_cnt","dup_cnt"]
+               "bruto","promo","manual","fidelidade","cnt","viol_a","viol_c","f5_cnt","f60_cnt","dup_cnt",
+               "manual_cnt","promo_cnt"]
 L_loja, L_cons, L_canal, L_mot, L_camp = {}, {}, {}, {}, {}
 A_loja, A_cons, A_canal, A_mot, A_camp = [], [], [], [], []
 A_loja_reg, A_loja_praca, A_loja_cluster = [], [], []
@@ -517,7 +520,7 @@ for (data_iso, codloja, consultor, canal, motivo2, campanha), g in group_data.it
         _ix_loja(codloja), _ix(consultor, L_cons, A_cons),
         _ix(canal, L_canal, A_canal), _ix(motivo2, L_mot, A_mot), _ix(campanha, L_camp, A_camp),
         round(g[0], 2), round(g[1], 2), round(g[2], 2), round(g[3], 2),
-        g[4], g[5], g[6], g[7], g[8], g[9]
+        g[4], g[5], g[6], g[7], g[8], g[9], g[10], g[11]
     ])
 
 print(f"Grupos ROWS (por data): {len(rows_list):,}")
