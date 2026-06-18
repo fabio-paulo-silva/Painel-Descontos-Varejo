@@ -13,7 +13,7 @@ import os
 BASE_DIR = r'C:\Users\fabio.silva\OneDrive - Gentil Negócios\Área de Trabalho\Fábio\merge_bases_descontos'
 DIST = os.path.join(BASE_DIR, 'dist')           # pasta publicada no GitHub Pages
 os.makedirs(DIST, exist_ok=True)
-CSV_PATH = os.path.join(BASE_DIR, 'merge_consolidado_geral.csv')
+CSV_PATH = os.path.join(BASE_DIR, 'base_consolidada.csv')
 OUT_PATH = os.path.join(DIST, 'index.html')      # dashboard (página inicial do Pages)
 DCENTROS_PATH = os.path.join(BASE_DIR, 'dCentros.xlsx')
 
@@ -101,6 +101,15 @@ def parse_br(s):
         return 0.0
     return float(s.strip().replace('.', '').replace(',', '.'))
 
+def parse_float(s):
+    """Lê float com ponto como decimal (formato pandas/base_consolidada)."""
+    if not s or s.strip() == '':
+        return 0.0
+    try:
+        return float(s.strip().replace(',', '.'))
+    except Exception:
+        return 0.0
+
 def to_iso(data_str):
     # DD/MM/YYYY -> YYYY-MM-DD (para filtro de data e ordenação)
     s = (data_str or '').strip()
@@ -131,159 +140,118 @@ def trunc(s, n):
     s = s.strip()
     return s[:n] if len(s) > n else s
 
-print("Lendo CSV...")
+print("Lendo base_consolidada.csv (formato pré-agregado)...")
 
-# First pass: aggregate coupon-SKU records
-# key = (chave_unica, sku)
-sku_data = {}  # key -> {bruto, promo, manual, fidelidade, loja, consultor, canal, mes, motivo2, campanha, hora, data_raw}
-gestor_short = set()  # nomes (short) de consultores que são gestores -> excluídos da análise por consultor
-
-VALID_ORIGINS = {'PROMOCIONAL', 'MANUAL', 'FIDELIDADE', 'SEM DESCONTOS'}
+# Cada linha já é um par único (chave, SKU) com descontos separados por origem.
+sku_data = {}  # (chave, sku) -> {bruto, promo, manual, fidelidade, loja, ...}
+gestor_short = set()
 
 with open(CSV_PATH, encoding='utf-8-sig', newline='') as f:
     reader = csv.reader(f, delimiter=';')
     header = next(reader)
-    # Map column names to indices
     col = {h.strip(): i for i, h in enumerate(header)}
 
-    # Column indices
-    i_codloja = col.get('DESC_Codigo Loja', 0)
-    i_loja = col.get('DESC_Loja', 1)
-    i_origem = col.get('DESC_Origem Desconto', 2)
-    i_campanha = col.get('DESC_Descricao Campanha', 3)
-    i_data = col.get('DESC_Data Desconto', 5)
-    i_sku = col.get('DESC_Codigo SKU', 7)
-    i_produto = col.get('DESC_Descricao Produto', 8)
-    i_qtd      = col.get('DESC_Qtd.', 9)
-    i_bruto    = col.get('DESC_Valor Bruto', 10)   # fallback se CUP colunas ausentes
-    i_desc     = col.get('DESC_Valor Desconto', 11)
-    i_liquido  = col.get('DESC_Valor Liquido', 12)
-    i_chave    = col.get('Chave Unica', 14)
-    i_hora     = col.get('CUP_Hora', 15)
-    i_canal    = col.get('CUP_Canal de venda', 16)
-    i_linha    = col.get('DESC_Linha', 6)     # linha física do cupom (dedup de bruto por linha)
-    i_cup_qtd  = col.get('CUP_Quantidade')   # mantido para compatibilidade (não mais usado para bruto)
-    i_cup_vuni = col.get('CUP_Valor Un.')
-    i_motivo2 = col.get('Motivo Desconto 2', 23)
-    i_consultor = col.get('Nome Consultor', 26)
+    i_codloja   = col.get('Codigo Loja', 0)
+    i_boleto    = col.get('N. Boleto', 1)
+    i_sku       = col.get('Codigo SKU', 2)
+    i_data      = col.get('Data Desconto', 3)
+    i_loja      = col.get('Loja', 4)
+    i_produto   = col.get('Descricao Produto', 5)
+    i_qtd       = col.get('Qtd', 6)
+    i_bruto     = col.get('Valor Bruto', 7)
+    i_fidelid   = col.get('Desc Fidelidade', 8)
+    i_promo     = col.get('Desc Promocional', 9)
+    i_manual    = col.get('Desc Manual', 10)
+    i_campanha  = col.get('Campanhas', 11)
+    i_motivo2   = col.get('Tags Desconto', 12)
+    i_canal     = col.get('Canal de venda', 13)
+    i_consultor = col.get('Nome Consultor', 14)
 
     rows_read = 0
     for row in reader:
         rows_read += 1
         if rows_read % 200000 == 0:
             print(f"  {rows_read:,} linhas...")
-        if len(row) < 20:
+        if len(row) < 10:
             continue
 
-        chave = row[i_chave].strip()
-        sku = row[i_sku].strip()
-        origem = row[i_origem].strip().upper()
-        if not chave or not sku:
+        codloja  = norm_code(row[i_codloja])
+        sku      = row[i_sku].strip()
+        boleto   = row[i_boleto].strip()
+        data_str = row[i_data].strip()
+        if not sku or not data_str:
             continue
 
-        key = (chave, sku)
-        desc_val = parse_br(row[i_desc])
+        chave = f"{codloja}-{boleto}-{data_str}"
+        key   = (chave, sku)
 
-        if key not in sku_data:
-            # Parse date -> mes
-            data_str = row[i_data].strip()
-            mes_key = ''
-            try:
-                if '/' in data_str:
-                    parts = data_str.split('/')
-                    mes_key = f"{parts[2]}-{parts[1]}"
-                elif '-' in data_str:
-                    parts = data_str.split('-')
-                    mes_key = f"{parts[0]}-{parts[1]}"
-            except:
-                pass
+        # Parse date -> mes
+        mes_key = ''
+        try:
+            if '/' in data_str:
+                parts = data_str.split('/')
+                mes_key = f"{parts[2]}-{parts[1]}"
+            elif '-' in data_str:
+                parts = data_str.split('-')
+                mes_key = f"{parts[0]}-{parts[1]}"
+        except Exception:
+            pass
 
-            loja_raw = row[i_loja].strip()
-            consultor_raw = row[i_consultor].strip()
-            consultor_short = trunc(short_name(consultor_raw), 35)
-            if is_gestor(consultor_raw) or norm_name(consultor_short) in EXTRA_GESTOR_SHORT:
-                gestor_short.add(consultor_short)
-            canal_raw = row[i_canal].strip()
-            motivo2_raw = row[i_motivo2].strip()
-            campanha_raw = row[i_campanha].strip()
-            hora_raw = row[i_hora].strip()
+        loja_raw      = row[i_loja].strip()
+        consultor_raw = row[i_consultor].strip() if len(row) > i_consultor else ''
+        consultor_short = trunc(short_name(consultor_raw), 35) if consultor_raw else ''
+        if is_gestor(consultor_raw) or norm_name(consultor_short) in EXTRA_GESTOR_SHORT:
+            gestor_short.add(consultor_short)
+        canal_raw    = row[i_canal].strip()    if len(row) > i_canal    else ''
+        motivo2_raw  = row[i_motivo2].strip()  if len(row) > i_motivo2  else ''
+        campanha_raw = row[i_campanha].strip() if len(row) > i_campanha else ''
 
-            sku_data[key] = {
-                'loja': trunc(loja_raw, 40),
-                'consultor': consultor_short,
-                'canal': trunc(canal_raw, 25),
-                'mes': mes_key,
-                'motivo2': trunc(motivo2_raw, 40),
-                'campanha': trunc(campanha_raw, 50),
-                'hora': hora_raw[:5] if hora_raw else '',
-                'data': data_str,
-                'codloja': norm_code(row[i_codloja]),
-                'sku': sku,
-                'produto': trunc(row[i_produto], 45),
-                # bruto = soma de DESC_Valor Bruto por linha distinta (cada linha física = um item)
-                # Origens distintas do mesmo SKU compartilham a mesma Linha → MAX por linha
-                'bl': {},    # linha -> bruto (para sum(distinct linhas))
-                'qtd': 0.0,  # quantidade (MAX entre origens)
-                'p': 0.0, 'm': 0.0, 'f': 0.0,  # somas de desconto por origem
-                'sig': {},   # (origem,desc) -> contagem (p/ detectar repetição idêntica)
-            }
+        bruto      = parse_float(row[i_bruto])
+        promo      = parse_float(row[i_promo])
+        manual     = parse_float(row[i_manual])
+        fidelidade = parse_float(row[i_fidelid])
+        qtd        = parse_float(row[i_qtd])
 
-        rec = sku_data[key]
-        # Bruto: soma por linha física distinta (DESC_Linha).
-        # Origens distintas do mesmo SKU repetem o mesmo bruto → MAX por linha evita duplicação.
-        linha = row[i_linha].strip() if i_linha is not None and len(row) > i_linha else ''
-        bval = parse_br(row[i_bruto])
-        if bval > 0:
-            rec['bl'][linha] = max(rec['bl'].get(linha, 0), bval)
-        qval = parse_br(row[i_qtd])
-        if qval > rec['qtd']:
-            rec['qtd'] = qval
-        if origem == 'PROMOCIONAL':
-            rec['p'] += desc_val; oc = 'P'
-        elif origem == 'MANUAL':
-            rec['m'] += desc_val; oc = 'M'
-        elif origem == 'FIDELIDADE':
-            rec['f'] += desc_val; oc = 'F'
-        else:
-            oc = 'S'
-        sg = (oc, round(desc_val, 2))
-        rec['sig'][sg] = rec['sig'].get(sg, 0) + 1
+        sku_data[key] = {
+            'loja':       trunc(loja_raw, 40),
+            'consultor':  consultor_short,
+            'canal':      trunc(canal_raw, 25),
+            'mes':        mes_key,
+            'motivo2':    trunc(motivo2_raw, 40),
+            'campanha':   trunc(campanha_raw, 50),
+            'hora':       '',
+            'data':       data_str,
+            'codloja':    codloja,
+            'sku':        sku,
+            'produto':    trunc(row[i_produto].strip() if len(row) > i_produto else '', 45),
+            'bruto':      bruto,
+            'promo':      promo,
+            'manual':     manual,
+            'fidelidade': fidelidade,
+            'qtd':        qtd,
+            'scans':      1,
+            'dup':        0,
+        }
 
 print(f"Total coupon-SKU únicos: {len(sku_data):,}")
 
-# Finalização por SKU — corrige bruto (múltiplos escaneamentos do mesmo SKU+origem
-# inflavam o desconto). Bruto real = maior soma de bruto entre as origens (cada origem
-# repete o bruto do item; somar entre origens multiplicaria). Detecta duplicidade.
-print("Finalizando SKUs (correção de duplicidade)...")
-item_acc = defaultdict(lambda: [0.0, 0.0, 0.0, 0, 0, 0])  # (mes, sku) -> [bruto, promo, manual, cnt, cnt_manual, cnt_promo]
+# Finalização: monta acumuladores por item (mes×sku) para análise de % por produto.
+print("Finalizando SKUs...")
+item_acc = defaultdict(lambda: [0.0, 0.0, 0.0, 0, 0, 0])
 item_name = {}
 dup_total = 0
 for rec in sku_data.values():
-    bruto = sum(rec['bl'].values()) if rec['bl'] else 0.0
-    promo = rec['p']; manual = rec['m']; fidelidade = rec['f']
-    qtd = rec['qtd']
-    scans = max(rec['sig'].values()) if rec['sig'] else 1  # maior repetição idêntica
-    rec['bruto'] = bruto
-    rec['promo'] = promo
-    rec['manual'] = manual
-    rec['fidelidade'] = fidelidade
-    rec['qtd'] = qtd
-    rec['scans'] = scans
-    rec['dup'] = 1 if scans > 1 else 0
-    if rec['dup']:
-        dup_total += 1
-    del rec['bl'], rec['p'], rec['m'], rec['f'], rec['sig']
-    # acumula análise por item (rede), separável por mês
+    bruto = rec['bruto']; promo = rec['promo']; manual = rec['manual']
     k = (rec['mes'], rec['sku'])
     ia = item_acc[k]
     ia[0] += bruto; ia[1] += promo; ia[2] += manual
-    ia[3] += 1                          # cnt_total
-    if manual > 0: ia[4] += 1          # cnt_manual
-    if promo  > 0: ia[5] += 1          # cnt_promo
+    ia[3] += 1
+    if manual > 0: ia[4] += 1
+    if promo  > 0: ia[5] += 1
     if rec['sku'] not in item_name:
         item_name[rec['sku']] = rec['produto']
 
-print(f"SKUs com escaneamento duplicado (qtd digitada manualmente repetida): {dup_total:,}")
+print(f"SKUs com escaneamento duplicado: {dup_total:,}")
 
 # Monta arrays de itens para os gráficos de % por item
 items_prod_idx, ITEMS_PROD, ITEMS = {}, [], []
